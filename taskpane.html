@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge">
+  <title>Visure</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="lib/pdf.min.js"></script>
+  <link rel="stylesheet" href="taskpane.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Visure</h1>
+      <p class="sub">Catastali (per immobile, storiche, per soggetto) e camerali. Il PDF viene letto solo su questo computer.</p>
+    </header>
+
+    <label id="zona" class="zona" tabindex="0">
+      <input id="file" type="file" accept="application/pdf,.pdf" multiple hidden>
+      <span class="zona-titolo">Trascina qui le visure in PDF</span>
+      <span class="zona-sub">oppure clicca per sceglierle</span>
+    </label>
+
+    <div id="risultati"></div>
+
+    <details id="impostazioni" class="card">
+      <summary>Testi predefiniti e opzioni</summary>
+      <label class="check"><input type="checkbox" id="minuscole" checked>Comuni e vie con le sole iniziali maiuscole (Via del Lavoro)</label>
+      <label for="separatore" class="campo-et">Tra un immobile e l'altro</label>
+      <select id="separatore">
+        <option value="a-capo">a capo</option>
+        <option value="pv-a-capo">punto e virgola e a capo</option>
+        <option value="pv">punto e virgola sulla stessa riga</option>
+      </select>
+      <label for="modFabbricato" class="campo-et">Fabbricati</label>
+      <textarea id="modFabbricato" rows="6" spellcheck="false"></textarea>
+      <label for="modTerreno" class="campo-et">Terreni</label>
+      <textarea id="modTerreno" rows="4" spellcheck="false"></textarea>
+      <label for="modSocieta" class="campo-et">Società</label>
+      <textarea id="modSocieta" rows="6" spellcheck="false"></textarea>
+      <p class="nota">Le voci con # vengono sostituite dai dati della visura. Le parti separate da virgola il cui dato
+        manca vengono omesse (es. rendita per un F/1, capitale per una società di persone).</p>
+      <button id="ripristina" type="button">Ripristina i testi predefiniti</button>
+    </details>
+  </main>
+
+  <footer id="barra" hidden>
+    <span id="conteggio"></span>
+    <div class="bottoni">
+      <button id="copia" type="button">Copia</button>
+      <button id="inserisci" type="button" class="primario">Inserisci nel documento</button>
+    </div>
+    <p id="stato" class="stato"></p>
+  </footer>
+
+  <script src="estrattore.js"></script>
+  <script src="taskpane.js"></script>
+</body>
+</html>
