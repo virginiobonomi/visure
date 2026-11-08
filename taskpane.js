@@ -24,6 +24,9 @@
     // testo dei terreni della versione precedente (senza la parola "classe"): sostituito dal nuovo predefinito
     var TERRENO_V1 = "Comune di #comune, sezione #codicesezionecensuaria, foglio #foglio, particella #PARTICELLA, #destinazione, #classe, di ettari #ettari.#are.#centiare, R.D. euro #redditodominicale, R.A. euro #redditoagrario";
     if (salvate && salvate.terreno === TERRENO_V1) delete salvate.terreno;
+    // testo delle società della versione precedente (senza direzione e coordinamento)
+    var SOCIETA_V1 = "\"#ragione_sociale\"\n#unico socio, con sede in #comune_sede, #indirizzo_sede n. #civico_sede, capitale sociale euro #capitale_sociale, interamente versato, iscritta presso il Registro delle Imprese tenuto dalla Camera di Commercio di #registro_imprese al numero di iscrizione e codice fiscale #codice_fiscale, R.E.A. n. #SIGLAPROVINCIA_REA-#numero_rea";
+    if (salvate && salvate.societa === SOCIETA_V1) delete salvate.societa;
     if (salvate) Object.keys(imp).forEach(function (k) { if (salvate[k] !== undefined) imp[k] = salvate[k]; });
   } catch (e) { /* memoria del browser non disponibile */ }
 
@@ -178,6 +181,14 @@
               v.campi._unico = cu.checked; v.testo = componi(v); v.modificato = false; ta.value = v.testo; adatta(ta);
             });
             corpo.appendChild(el("label", { classe: "check" }, [cu, document.createTextNode("con unico socio (da verificare sulla visura)")]));
+          }
+          if (v.campi._direzione) {
+            var cd = el("input", { type: "checkbox" });
+            cd.checked = !!v.campi._direzioneAttiva;
+            cd.addEventListener("change", function () {
+              v.campi._direzioneAttiva = cd.checked; v.testo = componi(v); v.modificato = false; ta.value = v.testo; adatta(ta);
+            });
+            corpo.appendChild(el("label", { classe: "check" }, [cd, document.createTextNode("soggetta a direzione e coordinamento di " + v.campi._direzione)]));
           }
           if (v.campi._versato && v.campi.capitale_sociale && v.campi._versato !== v.campi.capitale_sociale) {
             corpo.appendChild(el("div", { classe: "avviso", testo: "Capitale non interamente versato: sottoscritto euro " + v.campi.capitale_sociale + ", versato euro " + v.campi._versato + "." }));

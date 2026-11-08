@@ -523,6 +523,43 @@
     return false;
   }
 
+  // direzione e coordinamento (art. 2497-bis c.c.).
+  // 1) paragrafo del Registro Imprese "Società o enti che esercitano attività di direzione e coordinamento";
+  // 2) informazioni da statuto "gruppi societari ... DA PARTE DI X";
+  // 3) solo in mancanza, i dati dell'ultimo bilancio (segnalati come da verificare).
+  function direzioneCoordinamento(righe) {
+    var L = righe.map(function (r) { return pulisci(r.testo); });
+    var NUM_PAR = /^\d{1,2}\s+[A-Z][a-z']/;
+    for (var i = 0; i < L.length; i++) {
+      if (!/^\d{1,2}\s+Società o enti che esercitano attività di direzione/.test(L[i]) || /\.{3}/.test(L[i])) continue;
+      for (var j = i + 1; j < Math.min(L.length, i + 45); j++) {
+        if (NUM_PAR.test(L[j])) break;
+        if (/cessazione|fine controllo/i.test(L[j])) continue;
+        var m = L[j].match(/^controllante\s+(.+)$/i) ||
+          L[j].match(/^(.+?)\s+(?:\d{11}|[A-Z0-9]{16})\s+inizio controllo\b/i);
+        if (m) return { nome: pulisci(m[1].replace(/^"|"$/g, "")), fonte: "registro" };
+      }
+    }
+    var tutto = L.join("\n");
+    var ms = tutto.match(/gruppi societari\s+SOCIETA'?\s+SOTTOPOSTA AD ALTRUI ATTIVITA'?\s+DI DIREZIONE E COORDINAMENTO DA PARTE DI\s*\n?\s*"?([^"\n]+)"?/i);
+    if (ms) return { nome: pulisci(ms[1]), fonte: "registro" };
+    for (var k = 0; k < L.length; k++) {
+      if (!/^Società sottoposta ad altrui attività di direzione e/i.test(L[k])) continue;
+      var blocco = L.slice(k, k + 3).join(" ");
+      if (!/coordinamento\s+si\b|\bsi\s+coordinamento\b|direzione e\s+si\b/i.test(blocco)) return null;
+      for (var q = k + 1; q < Math.min(L.length, k + 6); q++) {
+        var md = L[q].match(/^Denominazione della società o ente che esercita l'attività di\s*(.*)$/i);
+        if (!md) continue;
+        var nome = md[1];
+        var seg = (L[q + 1] || "").match(/^direzione e coordinamento\s*(.*)$/i);
+        if (seg) nome = pulisci(nome + " " + seg[1]);
+        if (nome) return { nome: pulisci(nome), fonte: "bilancio" };
+      }
+      return null;
+    }
+    return null;
+  }
+
   function analizzaCamerale(righe) {
     var L = righe.map(function (r) { return r.testo; });
     var tutto = L.join("\n");
@@ -619,6 +656,14 @@
     }
     campi._unico = unico;
 
+    var dir = direzioneCoordinamento(righe);
+    if (dir) {
+      campi._direzione = dir.nome;
+      campi._direzioneAttiva = dir.fonte === "registro";
+      if (dir.fonte === "bilancio") avvisi.push("Direzione e coordinamento di " + dir.nome +
+        ": risulta solo dall'ultimo bilancio depositato, non dal Registro Imprese. Da verificare.");
+    }
+
     ["ragione_sociale", "codice_fiscale", "registro_imprese", "numero_rea"].forEach(function (k) {
       if (!campi[k]) avvisi.push("Non trovato: " + k.replace(/_/g, " "));
     });
@@ -630,7 +675,7 @@
   var MODELLI = {
     terreno: "Comune di #comune, sezione #codicesezionecensuaria, foglio #foglio, particella #PARTICELLA, #destinazione, classe #classe, di ettari #ettari.#are.#centiare, R.D. euro #redditodominicale, R.A. euro #redditoagrario",
     fabbricato: "Comune di #comune, sezione #sezioneurbana, foglio #foglio, particella #particella, subalterno #subalterno, #zonacensuaria, #indirizzo n. #numerocivico, piano #piano, categoria #categoria, classe #classe, consistenza #consistenza, superficie catastale totale mq. #superficiecatastale, rendita euro #rendita",
-    societa: "\"#ragione_sociale\"\n#unico socio, con sede in #comune_sede, #indirizzo_sede n. #civico_sede, capitale sociale euro #capitale_sociale, interamente versato, iscritta presso il Registro delle Imprese tenuto dalla Camera di Commercio di #registro_imprese al numero di iscrizione e codice fiscale #codice_fiscale, R.E.A. n. #SIGLAPROVINCIA_REA-#numero_rea"
+    societa: "\"#ragione_sociale\"\n#unico socio, con sede in #comune_sede, #indirizzo_sede n. #civico_sede, capitale sociale euro #capitale_sociale, interamente versato, iscritta presso il Registro delle Imprese tenuto dalla Camera di Commercio di #registro_imprese al numero di iscrizione e codice fiscale #codice_fiscale, R.E.A. n. #SIGLAPROVINCIA_REA-#numero_rea, soggetta all'attività di direzione e coordinamento di #nome_società"
   };
 
   // valori pronti per i modelli (maiuscole/minuscole, "con unico", versato)
@@ -645,6 +690,7 @@
     }
     if (tipo === "societa") {
       v.unico = campi._unico ? "con unico" : "";
+      v["nome_società"] = v.nome_societa = (campi._direzioneAttiva && campi._direzione) ? campi._direzione : "";
       if (campi._tipo === "persone") v.capitale_sociale = "";
       v._versato = v.capitale_sociale
         ? ((!campi._versato || campi._versato === campi.capitale_sociale) ? "interamente versato" : "versato euro " + campi._versato)
@@ -663,7 +709,7 @@
           if (v._versato) fuori.push(seg.replace(/interamente versato/i, v._versato));
           return;
         }
-        var segni = [], re = /#([A-Za-z_]+)/g, m;
+        var segni = [], re = /#([A-Za-z_\u00C0-\u00FF]+)/g, m;
         while ((m = re.exec(seg))) segni.push({ nome: m[1].toLowerCase(), da: m.index, a: m.index + m[0].length });
         if (!segni.length) { fuori.push(seg); return; }
         if (!v[segni[0].nome]) return;                         // manca il dato principale: si omette il segmento
@@ -693,7 +739,7 @@
 
   var api = {
     analizza: analizza, componi: componi, MODELLI: MODELLI, capitalizza: capitalizza,
-    costruisciRighe: costruisciRighe, separaIndirizzo: separaIndirizzo, numeroSoci: numeroSoci, socioUnicoInCarica: socioUnicoInCarica
+    costruisciRighe: costruisciRighe, separaIndirizzo: separaIndirizzo, numeroSoci: numeroSoci, socioUnicoInCarica: socioUnicoInCarica, direzioneCoordinamento: direzioneCoordinamento
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Visure = api;
