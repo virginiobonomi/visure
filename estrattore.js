@@ -159,11 +159,35 @@
     var piano = "", civico = "";
     var mp = s.match(/\s*\bPiano\s+(.+)$/i);
     if (mp) { piano = pulisci(mp[1]).replace(/\s*-\s*$/, ""); s = s.slice(0, mp.index); }
+    // "n. 11 Scala B Interno 3": scala e interno seguono il civico
+    var extra = [], me;
+    while ((me = s.match(/\s+\b(Scala|Interno)\s+(\S+)\s*$/i))) {
+      extra.unshift(me[1].toLowerCase() + " " + me[2]); s = s.slice(0, me.index);
+    }
     var mc = s.match(/\s*\bn\.\s*(\S+)\s*$/i);
     if (mc) { civico = mc[1]; s = s.slice(0, mc.index); }
+    if (extra.length) {
+      if (civico) civico += ", " + extra.join(", ");
+      else s += ", " + extra.join(", ");
+    }
     // "n. SNC" resta come civico; "SNC" senza "n." resta attaccato alla via, come in visura
     return { via: pulisci(s), civico: civico, piano: piano };
   }
+
+  // "RISTRUTTURAZIONE del 15/07/2025 Pratica n. VA0140830 in atti dal 15/07/2025 RISTRUTTURAZIONE (n. 140830.1/2025)"
+  function datiDerivanti(testo) {
+    var t = pulisci(testo).replace(/([A-Z])- (?=[A-Z])/g, "$1-"), out = {};   // "FUSIONE- AMPLIAMENTO" a capo
+    var m = t.match(/\bdel\s+(\d{2}\/\d{2}\/\d{4})\s+Pratica n\.\s*([A-Z]{2}\d+)\s+in atti dal\s+(\d{2}\/\d{2}\/\d{4})\s*(.*?)\s*\(n\./);
+    if (!m) return out;
+    out.data = m[1]; out.pratica = m[2]; out.inAtti = m[3];
+    out.causale = pulisci(m[4]);
+    if (!out.causale) {
+      var prima = t.slice(0, m.index).split(/\s(?=[A-Z][A-Z' -]+$)/).pop();
+      out.causale = pulisci(prima);
+    }
+    return out;
+  }
+  var PROPOSTA = /classamento e rendita proposti/i;
 
   function consistenza(s) {
     s = pulisci(s);
@@ -184,6 +208,11 @@
     var storica = /storica/i.test(titolo);
     var ctx = { comune: "", codice: "", sezCens: "", catasto: "" };
     var col = null, attiva = false, primaTabellaFatta = false, ultimaT = null;
+    var provincia = "", nSez = 0, immobileN = null;
+    righe.slice(0, 15).forEach(function (r) {
+      var mp = r.testo.match(/Direzione Provinciale di\s+(.+?)(?:\s{2,}|\s+Visura\b|$)/);
+      if (mp && !provincia) provincia = pulisci(mp[1]);
+    });
 
     // Dati della richiesta (visure per immobile)
     for (var k = 0; k < Math.min(righe.length, 40); k++) {
@@ -200,9 +229,16 @@
       var r = righe[i], t = r.testo, m;
       if ((m = t.match(/^\d+\.\s+Immobili siti nel Comune di (.+?) \(Codice\s+([A-Z]\d{3})([A-Z])?\)(?:\s+Sezione\s+(.+?))?\s+Catasto dei (Fabbricati|Terreni)/))) {
         ctx = { comune: m[1], codice: m[2], sezCens: m[3] || "", nomeSez: m[4] || "", catasto: m[5] === "Terreni" ? "T" : "F" };
-        attiva = false; col = null;
+        attiva = false; col = null; nSez++; immobileN = null;
         continue;
       }
+      // visure per soggetto: "Immobile 8: Annotazione: -classamento e rendita proposti (d.m. 701/94)"
+      var mi = t.match(/^Immobile (\d+):/);
+      if (mi && r.items[0].x < 60) immobileN = mi[1];
+      if (immobileN && /^(Immobile \d+:\s*)?Annotazione:/.test(t) && PROPOSTA.test(t)) {
+        beni.forEach(function (b) { if (b._sez === nSez && b._n === immobileN) b.campi._proposta = true; });
+      }
+      if (/^(Intestazione|INTESTATI|Situazione|L'intestazione|\d+\.\s+Immobili)/.test(t)) immobileN = null;
       if (r.items[0].x < 60 && /^(Intestazione degli immobili|INTESTATI|Situazione degli intestati|DATI DERIVANTI DA|L'intestazione alla data|Mappali Terreni Correlati|Immobile \d+:|Totale:)/.test(t)) {
         attiva = false;
         if (/^(Intestazione|INTESTATI|Situazione degli intestati|L'intestazione)/.test(t)) col = null;
@@ -234,8 +270,9 @@
       if (r.y >= col.yBottom - 1) continue;
       var bene = col.tipo === "F" ? rigaFabbricato(righe, i, col, ctx) : rigaTerreno(righe, i, col, ctx);
       if (!bene || !bene.campi.foglio || !bene.campi.particella) continue;
+      bene._n = nIt.str; bene._sez = nSez; bene.campi.provincia = provincia;
       if (perImmobile) {
-        if (col.tipo === "F") bene.campi = Object.assign(bene.campi, indirizzoStorica(righe, i));
+        if (col.tipo === "F") bene.campi = Object.assign(bene.campi, indirizzoStorica(righe, i, col));
         beni.push(bene); primaTabellaFatta = true; attiva = false; col = null;
         continue;
       }
@@ -318,6 +355,7 @@
       var s = separaIndirizzo(ind);
       campi.indirizzo = s.via; campi.numerocivico = s.civico; campi.piano = s.piano;
     }
+    Object.assign(campi, variazione(derivantiSoggetto(righe, i, col)));
     return { catasto: "F", campi: campi };
   }
 
@@ -355,16 +393,61 @@
     return "";
   }
 
-  function indirizzoStorica(righe, i) {
-    for (var j = i + 1; j < Math.min(righe.length, i + 12); j++) {
-      var it = righe[j].items;
-      if (it[0] && it[0].str === "Indirizzo" && it[1]) {
-        var s = separaIndirizzo(it.slice(1).map(function (x) { return x.str; }).join(" "));
-        return { indirizzo: s.via, numerocivico: s.civico, piano: s.piano };
-      }
-      if (it[0] && /^Situazione|^Mappali|^Notifica/.test(it[0].str) && j > i + 1 && it[0].str !== "Notifica") break;
+  function variazione(d) {
+    return { _data_variazione: d.data || "", _pratica_variazione: d.pratica || "", _in_atti_dal: d.inAtti || "", _causale_variazione: d.causale || "" };
+  }
+
+  // colonna "Dati derivanti da" delle visure per soggetto: dalla riga precedente fino a poco sotto la riga
+  function derivantiSoggetto(righe, i, col) {
+    var r = righe[i], limite = col.yBottom;
+    for (var j = i - 1; j >= 0 && righe[j].p === r.p; j--) {
+      var a = righe[j].items[0];
+      if (righe[j].y >= col.yBottom - 1) break;
+      if (a && /^\d+$/.test(a.str) && a.x < col.foglio.x - 5) { limite = righe[j].y; break; }
     }
-    return {};
+    var info = [];
+    for (var k = Math.max(0, i - 15); k < Math.min(righe.length, i + 15); k++) {
+      var rr = righe[k];
+      if (rr.p !== r.p || rr.y >= limite - 0.5 || rr.y < r.y - 40) continue;
+      if (rr.items[0] && rr.items[0].x < 60 && rr.y < r.y) continue;
+      rr.items.forEach(function (it) { if (it.x >= col.infoX && it.x < col.ultX) info.push(it); });
+    }
+    info = info.filter(function (it) { return !/^(Notifica|Annotazione)(\s+(Notifica|Annotazione))*$/.test(it.str); });
+    info.sort(function (a, b) { return b.y - a.y || a.x - b.x; });
+    // si parte dall'indirizzo dell'immobile (sopra la riga): ciò che precede appartiene all'immobile precedente
+    var inizio = -1;
+    info.forEach(function (it, n) { if (TOPONIMI.test(it.str) && it.y >= r.y - 1) inizio = n; });
+    if (inizio < 0) {
+      inizio = 0;
+      while (inizio < info.length && info[inizio].y > r.y + 12) inizio++;
+    }
+    return datiDerivanti(info.slice(inizio).map(function (it) { return it.str; }).join(" "));
+  }
+
+  // visure per immobile: indirizzo, annotazioni e dati derivanti della prima situazione
+  function indirizzoStorica(righe, i, col) {
+    var out = {}, der = [];
+    righe[i].items.forEach(function (it) { if (col && it.x >= col.infoX) der.push(it.str); });
+    for (var j = i + 1; j < Math.min(righe.length, i + 14); j++) {
+      var it = righe[j].items;
+      if (!it[0]) continue;
+      if (it[0].str === "Indirizzo" && it[1] && out.indirizzo === undefined) {
+        var s = separaIndirizzo(it.slice(1).map(function (x) { return x.str; }).join(" "));
+        out.indirizzo = s.via; out.numerocivico = s.civico; out.piano = s.piano;
+        continue;
+      }
+      if (it[0].str === "Annotazioni" || it[0].str === "Annotazione") {
+        // il testo dell'annotazione può stare qualche punto più in basso dell'etichetta
+        var ann = righe[j].testo;
+        if (righe[j + 1] && righe[j + 1].p === righe[j].p && righe[j].y - righe[j + 1].y < 6 && righe[j + 1].items[0].x > 100) ann += " " + righe[j + 1].testo;
+        if (PROPOSTA.test(ann)) out._proposta = true;
+        continue;
+      }
+      if (/^(Situazione|Mappali|L'intestazione|Unità immobiliare)/.test(it[0].str) && j > i + 1) break;
+      if (out.indirizzo === undefined && col) it.forEach(function (x) { if (x.x >= col.infoX) der.push(x.str); });
+    }
+    Object.assign(out, variazione(datiDerivanti(der.join(" "))));
+    return out;
   }
 
   function numeroIt(s) { return parseFloat(String(s).replace(/\./g, "").replace(",", ".")) || 0; }
@@ -674,7 +757,7 @@
 
   var MODELLI = {
     terreno: "Comune di #comune, sezione #codicesezionecensuaria, foglio #foglio, particella #PARTICELLA, #destinazione, classe #classe, di ettari #ettari.#are.#centiare, R.D. euro #redditodominicale, R.A. euro #redditoagrario",
-    fabbricato: "Comune di #comune, sezione #sezioneurbana, foglio #foglio, particella #particella, subalterno #subalterno, #zonacensuaria, #indirizzo n. #numerocivico, piano #piano, categoria #categoria, classe #classe, consistenza #consistenza, superficie catastale totale mq. #superficiecatastale, rendita euro #rendita",
+    fabbricato: "Comune di #comune, sezione #sezioneurbana, foglio #foglio, particella #particella, subalterno #subalterno, #zonacensuaria, #indirizzo n. #numerocivico, piano #piano, categoria #categoria, classe #classe, consistenza #consistenza, superficie catastale totale mq. #superficiecatastale, rendita euro #rendita[ (rendita proposta ex D.M. n. 701/94, a seguito di denuncia di variazione presentata all'Agenzia delle Entrate – Direzione Provinciale di #provincia – Ufficio Provinciale – Territorio per \"#causale_variazione\" in data #data_variazione, pratica n. #pratica_variazione, in atti #in_atti)]",
     societa: "\"#ragione_sociale\"\n#unico socio, con sede in #comune_sede, #indirizzo_sede n. #civico_sede, capitale sociale euro #capitale_sociale, interamente versato, iscritta presso il Registro delle Imprese tenuto dalla Camera di Commercio di #registro_imprese al numero di iscrizione e codice fiscale #codice_fiscale, R.E.A. n. #SIGLAPROVINCIA_REA-#numero_rea, soggetta all'attività di direzione e coordinamento di #nome_società"
   };
 
@@ -687,6 +770,19 @@
       ["comune", "indirizzo", "comune_sede", "indirizzo_sede", "registro_imprese"].forEach(function (k) {
         if (v[k]) v[k] = capitalizza(v[k]);
       });
+    }
+    if (tipo === "fabbricato") {
+      // rendita proposta (D.M. 701/94): i dati della variazione servono solo in quel caso
+      var vuoto = "______";
+      ["data_variazione", "pratica_variazione", "causale_variazione", "in_atti", "provincia"].forEach(function (k) { v[k] = ""; });
+      if (campi._proposta) {
+        v.data_variazione = campi._data_variazione || vuoto;
+        v.pratica_variazione = campi._pratica_variazione || vuoto;
+        v.causale_variazione = campi._causale_variazione || vuoto;
+        v.provincia = campi.provincia ? capitalizza(campi.provincia) : vuoto;
+        v.in_atti = !campi._in_atti_dal ? "dal " + vuoto :
+          (campi._in_atti_dal === campi._data_variazione ? "da pari data" : "dal " + campi._in_atti_dal);
+      }
     }
     if (tipo === "societa") {
       v.unico = campi._unico ? "con unico" : "";
@@ -702,6 +798,16 @@
   function componi(modello, campi, tipo, opz) {
     var v = valori(tipo, campi, opz);
     return String(modello).split("\n").map(function (riga) {
+      // [ ... ]: parte facoltativa, scritta solo se ci sono tutti i dati che contiene
+      riga = riga.replace(/\[([^\[\]]*)\]/g, function (tutto, dentro) {
+        var ok = true;
+        var testo = dentro.replace(/#([A-Za-z_\u00C0-\u00FF]+)/g, function (m, nome) {
+          var val = v[nome.toLowerCase()];
+          if (!val) ok = false;
+          return val || "";
+        });
+        return ok ? testo : "";
+      });
       var segmenti = riga.split(", ");
       var fuori = [];
       segmenti.forEach(function (seg) {

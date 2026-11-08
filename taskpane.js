@@ -27,6 +27,9 @@
     // testo delle società della versione precedente (senza direzione e coordinamento)
     var SOCIETA_V1 = "\"#ragione_sociale\"\n#unico socio, con sede in #comune_sede, #indirizzo_sede n. #civico_sede, capitale sociale euro #capitale_sociale, interamente versato, iscritta presso il Registro delle Imprese tenuto dalla Camera di Commercio di #registro_imprese al numero di iscrizione e codice fiscale #codice_fiscale, R.E.A. n. #SIGLAPROVINCIA_REA-#numero_rea";
     if (salvate && salvate.societa === SOCIETA_V1) delete salvate.societa;
+    // testo dei fabbricati della versione precedente (senza rendita proposta)
+    var FABBRICATO_V1 = "Comune di #comune, sezione #sezioneurbana, foglio #foglio, particella #particella, subalterno #subalterno, #zonacensuaria, #indirizzo n. #numerocivico, piano #piano, categoria #categoria, classe #classe, consistenza #consistenza, superficie catastale totale mq. #superficiecatastale, rendita euro #rendita";
+    if (salvate && salvate.fabbricato === FABBRICATO_V1) delete salvate.fabbricato;
     if (salvate) Object.keys(imp).forEach(function (k) { if (salvate[k] !== undefined) imp[k] = salvate[k]; });
   } catch (e) { /* memoria del browser non disponibile */ }
 
@@ -96,7 +99,13 @@
         if (d.ris.tipo === "catasto") {
           d.voci = d.ris.beni.map(function (b) {
             // con molti immobili (visura per soggetto) si parte senza selezione: si scelgono quelli dell'atto
-            return { tipo: b.catasto === "F" ? "fabbricato" : "terreno", campi: b.campi, sel: d.ris.beni.length <= 3, modificato: false, avviso: b.avviso || "" };
+            var avv = b.avviso || "";
+            if (b.campi._proposta) {
+              var manca = !b.campi._data_variazione || !b.campi._pratica_variazione;
+              avv = (avv ? avv + " " : "") + "Rendita proposta (D.M. 701/94)" +
+                (manca ? ": dati della variazione non trovati nella visura, completa le parti ______." : ".");
+            }
+            return { tipo: b.catasto === "F" ? "fabbricato" : "terreno", campi: b.campi, sel: d.ris.beni.length <= 3, modificato: false, avviso: avv };
           });
         } else if (d.ris.tipo === "camerale") {
           d.voci = [{ tipo: "societa", campi: d.ris.societa, sel: true, modificato: false, avviso: "" }];
