@@ -21,11 +21,17 @@
   var imp = predefiniti();
   try {
     var salvate = JSON.parse(window.localStorage.getItem(CHIAVE) || "null");
+    // testo dei terreni della versione precedente (senza la parola "classe"): sostituito dal nuovo predefinito
+    var TERRENO_V1 = "Comune di #comune, sezione #codicesezionecensuaria, foglio #foglio, particella #PARTICELLA, #destinazione, #classe, di ettari #ettari.#are.#centiare, R.D. euro #redditodominicale, R.A. euro #redditoagrario";
+    if (salvate && salvate.terreno === TERRENO_V1) delete salvate.terreno;
     if (salvate) Object.keys(imp).forEach(function (k) { if (salvate[k] !== undefined) imp[k] = salvate[k]; });
   } catch (e) { /* memoria del browser non disponibile */ }
 
+  // memorizza solo ciò che differisce dai predefiniti, così i futuri aggiornamenti dei testi arrivano a tutti
   function salva() {
-    try { window.localStorage.setItem(CHIAVE, JSON.stringify(imp)); } catch (e) { /* ignora */ }
+    var pred = predefiniti(), diverse = {};
+    Object.keys(imp).forEach(function (k) { if (imp[k] !== pred[k]) diverse[k] = imp[k]; });
+    try { window.localStorage.setItem(CHIAVE, JSON.stringify(diverse)); } catch (e) { /* ignora */ }
   }
 
   function mostraImpostazioni() {

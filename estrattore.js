@@ -628,7 +628,7 @@
   // ------------------------------------------------------------------ composizione dei testi
 
   var MODELLI = {
-    terreno: "Comune di #comune, sezione #codicesezionecensuaria, foglio #foglio, particella #PARTICELLA, #destinazione, #classe, di ettari #ettari.#are.#centiare, R.D. euro #redditodominicale, R.A. euro #redditoagrario",
+    terreno: "Comune di #comune, sezione #codicesezionecensuaria, foglio #foglio, particella #PARTICELLA, #destinazione, classe #classe, di ettari #ettari.#are.#centiare, R.D. euro #redditodominicale, R.A. euro #redditoagrario",
     fabbricato: "Comune di #comune, sezione #sezioneurbana, foglio #foglio, particella #particella, subalterno #subalterno, #zonacensuaria, #indirizzo n. #numerocivico, piano #piano, categoria #categoria, classe #classe, consistenza #consistenza, superficie catastale totale mq. #superficiecatastale, rendita euro #rendita",
     societa: "\"#ragione_sociale\"\n#unico socio, con sede in #comune_sede, #indirizzo_sede n. #civico_sede, capitale sociale euro #capitale_sociale, interamente versato, iscritta presso il Registro delle Imprese tenuto dalla Camera di Commercio di #registro_imprese al numero di iscrizione e codice fiscale #codice_fiscale, R.E.A. n. #SIGLAPROVINCIA_REA-#numero_rea"
   };
