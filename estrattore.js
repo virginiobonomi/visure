@@ -28,6 +28,7 @@
       if (i > 0 && PARTICELLE.indexOf(low) >= 0) return low;
       if (/^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/.test(w) && w.length > 1) return w;   // numeri romani
       if (/\d/.test(w) && !/^\d+$/.test(w)) return w.toUpperCase();      // 12/A, S1
+      if (/^S\.?N\.?C\.?$/.test(w)) return w;                              // senza numero civico
       // dell'industria -> dell'Industria ; sant'ambrogio -> Sant'Ambrogio
       var m = low.match(/^(d|l|dell|dall|all|nell|sull|sant|santa|sant)'(.+)$/);
       if (m && i > 0 && ["d", "l", "dell", "dall", "all", "nell", "sull"].indexOf(m[1]) >= 0) {
@@ -41,7 +42,7 @@
   function maiuscolaParte(p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : p; }
   // nelle visure gli accenti finali sono scritti con l'apostrofo: LOCALITA' -> località, CANTU' -> cantù
   var ACCENTI = { a: "à", e: "è", i: "ì", o: "ò", u: "ù" };
-  function accentoFinale(w) { return w.replace(/([aeiou])'$/i, function (m, v) { return ACCENTI[v.toLowerCase()]; }); }
+  function accentoFinale(w) { return w.replace(/([aeiou])['`´]$/i, function (m, v) { return ACCENTI[v.toLowerCase()]; }); }
 
   function senzaZeri(s) { return String(s).replace(/^0+(?=\d)/, ""); }
   function euro(s) { var m = String(s || "").match(/Euro\s*([\d.]+,\d{2})/i); return m ? m[1] : ""; }
@@ -127,6 +128,7 @@
       col.tipo = "T";
       col.porz = one(/^Porz/);
       col.qualita = one(/^Qualit/);
+      col.classeT = one(/^Classe$/);
       col.supTesta = one(/^Superficie/);
       col.haareca = one(/^ha are ca$/) || one(/^ha$/);
       col.deduz = one(/^Deduz/);
@@ -156,10 +158,10 @@
     s = pulisci(s);
     var piano = "", civico = "";
     var mp = s.match(/\s*\bPiano\s+(.+)$/i);
-    if (mp) { piano = pulisci(mp[1]); s = s.slice(0, mp.index); }
+    if (mp) { piano = pulisci(mp[1]).replace(/\s*-\s*$/, ""); s = s.slice(0, mp.index); }
     var mc = s.match(/\s*\bn\.\s*(\S+)\s*$/i);
     if (mc) { civico = mc[1]; s = s.slice(0, mc.index); }
-    if (/^SNC$/i.test(civico)) civico = "";
+    // "n. SNC" resta come civico; "SNC" senza "n." resta attaccato alla via, come in visura
     return { via: pulisci(s), civico: civico, piano: piano };
   }
 
@@ -339,9 +341,13 @@
       if (!TOPONIMI.test(info[n].str)) continue;
       var testo = info[n].str, y = info[n].y;
       for (var q = n + 1; q < info.length; q++) {
-        if (/\bPiano\b/.test(testo)) break;
+        var pianoAperto = /\bPiano\b.*-\s*$/.test(testo);       // "Piano S1 -" che continua sotto con "T-1"
+        if (/\bPiano\b/.test(testo) && !pianoAperto) break;
         if (y - info[q].y > 10) break;
-        if (/^(n\.\s|Piano\s|Scala\s|Interno\s)/.test(info[q].str)) { testo += " " + info[q].str; y = info[q].y; }
+        if (/^(n\.\s|Piano\s|Scala\s|Interno\s)/.test(info[q].str) ||
+            (pianoAperto && /^[A-Z0-9][A-Z0-9-]{0,4}(\s*-\s*[A-Z0-9][A-Z0-9-]{0,4})*\s*-?$/.test(info[q].str))) {
+          testo += " " + info[q].str; y = info[q].y;
+        }
         else break;
       }
       return testo;
@@ -398,28 +404,45 @@
       return l.items.some(function (it) { var c = centro(it); return c >= porzL && c < porzR && /^[A-Z]{1,2}$/.test(it.str); });
     });
 
+    // limite sinistro della colonna Classe (intestazione separata o "Qualità Classe" in un solo elemento)
+    var classeMinX = col.classeT ? col.classeT.x - 10 :
+      (col.qualita && /Classe/.test(col.qualita.str) ? col.qualita.x + col.qualita.w * 0.55 : supL);
+
+    // legge una parte: gli elementi possono stare su più linee (es. "SEMIN 3" sopra, "ARBOR" sotto la riga)
     function leggiParte(items) {
       var parte = { porz: "", qual: [], classe: "", sup: [], euro: [] };
+      var perLinea = {};
       items.forEach(function (it) {
-        var c = centro(it);
-        if (/^Euro\s/.test(it.str)) { parte.euro.push(it); return; }
-        if (/^Lire\s/.test(it.str)) return;
-        if (c >= porzL && c < porzR) { if (it.str !== "-") parte.porz = it.str; return; }
-        if (c < porzL) return;
-        if (it.x >= supL && it.x + it.w <= supR && /^\d+$/.test(it.str)) { parte.sup.push(it.str); return; }
-        if (it.x + it.w < supL) parte.qual.push(it.str);
+        var k = null;
+        Object.keys(perLinea).forEach(function (y) { if (Math.abs(+y - it.y) <= 1.5) k = y; });
+        k = k || String(it.y);
+        (perLinea[k] = perLinea[k] || []).push(it);
       });
-      if (parte.qual.length > 1 && /^(\d{1,2}|U)$/.test(parte.qual[parte.qual.length - 1])) parte.classe = parte.qual.pop();
+      Object.keys(perLinea).sort(function (a, b) { return +b - +a; }).forEach(function (y) {
+        var inQual = 0;
+        perLinea[y].sort(function (a, b) { return a.x - b.x; }).forEach(function (it) {
+          var c = centro(it), str = pulisci(it.str);
+          if (!str) return;
+          if (/^Euro\s/.test(str)) { parte.euro.push(it); return; }
+          if (/^(Lire|L\.)\s/.test(str)) return;
+          if (c >= porzL && c < porzR) { if (str !== "-") parte.porz = str; return; }
+          if (c < porzL) return;
+          if (it.x >= supL && it.x + it.w <= supR && /^\d+(\s+\d+)*$/.test(str)) {
+            parte.sup = parte.sup.concat(str.split(/\s+/)); return;
+          }
+          if (it.x + it.w < supL) {
+            if (/^(\d{1,2}|U)$/.test(str) && (inQual > 0 || it.x >= classeMinX)) parte.classe = str;
+            else parte.qual.push(str);
+            inQual++;
+          }
+        });
+      });
       return parte;
     }
 
     var parti;
     if (conPorzione.length) parti = conPorzione.map(function (l) { return leggiParte(l.items); });
-    else {
-      var p0 = leggiParte(r.items.filter(function (it) { return it.x < col.infoX; }));
-      p0.euro = banda.filter(function (it) { return /^Euro\s/.test(it.str); });
-      parti = [p0];
-    }
+    else parti = [leggiParte(banda)];
 
     var totCa = 0, haSup = false, dom = 0, agr = 0, haDom = false, haAgr = false, qualita2 = [], classi = [];
     parti.forEach(function (pt) {
@@ -463,6 +486,42 @@
   }
 
   // ------------------------------------------------------------------ CAMERALE
+
+  // numero dei soci nel riquadro iniziale: "Soci e titolari di diritti su / azioni e quote  1"
+  // (il numero può stare sulla stessa riga dell'etichetta o su quella successiva)
+  function numeroSoci(righe) {
+    for (var i = 0; i < righe.length; i++) {
+      var et = null;
+      righe[i].items.forEach(function (it) { if (!et && /^Soci e titolari di diritti su\b/.test(pulisci(it.str))) et = it; });
+      if (!et || /^\s*\d+\s+Soci/.test(righe[i].testo)) continue;
+      for (var j = i; j < Math.min(righe.length, i + 3); j++) {
+        if (righe[j].p !== righe[i].p) break;
+        var num = null;
+        righe[j].items.forEach(function (it) {
+          var t = pulisci(it.str);
+          var m = t.match(/(?:^|azioni e quote\s+)(\d{1,6})$/);
+          if (!num && m && it.x >= et.x - 2) num = parseInt(m[1], 10);
+          var m2 = t.match(/^Soci e titolari di diritti su\s+(\d{1,6})$/);
+          if (!num && m2) num = parseInt(m2[1], 10);
+        });
+        if (num !== null) return num;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  function socioUnicoInCarica(righe) {
+    for (var i = 0; i < righe.length; i++) {
+      if (!/^\s*\d+\s+Titolari di altre cariche o qualifiche\s*$/.test(righe[i].testo)) continue;
+      for (var j = i + 1; j < Math.min(righe.length, i + 60); j++) {
+        var t = righe[j].testo;
+        if (/^\s*\d+\s+[A-Z][a-z]/.test(t)) break;                // paragrafo successivo
+        if (/^\s*Socio Unico\b/.test(t)) return true;
+      }
+    }
+    return false;
+  }
 
   function analizzaCamerale(righe) {
     var L = righe.map(function (r) { return r.testo; });
@@ -516,7 +575,7 @@
       campi.provincia_sede = mSede[2];
       var via = pulisci(mSede[3]), civ = "";
       var mc = via.match(/^(.*?)\s+((?:\d+[A-Z]?(?:\/\s?[A-Z0-9]+)?)|SNC|S\.N\.C\.|KM\s*[\d,.]+)$/i);
-      if (mc) { via = mc[1]; civ = /^S\.?N\.?C\.?$/i.test(mc[2]) ? "" : mc[2]; }
+      if (mc && !/^S\.?N\.?C\.?$/i.test(mc[2])) { via = mc[1]; civ = mc[2]; }   // "SNC" resta nella via, come in visura
       campi.indirizzo_sede = via; campi.civico_sede = civ;
     } else avvisi.push("Sede non trovata.");
 
@@ -547,14 +606,16 @@
     // può riferirsi all'organo amministrativo). Il pannello lo mostra sempre come dato da verificare.
     var unico = false;
     if (campi._tipo === "capitali") {
-      var mN = tutto.match(/Soci e titolari di diritti su\s+azioni e quote\s+(\d+)/i);
-      if (mN) unico = mN[1] === "1";
+      var nSoci = numeroSoci(righe);
+      if (nSoci !== null) unico = nSoci === 1;
       else {
         var iSoci = -1;
         for (var q = 0; q < L.length; q++) if (/^\s*\d+\s+Soci e titolari/.test(L[q]) && !/\.{3}/.test(L[q])) iSoci = q;
         if (iSoci >= 0) unico = /\b(UNICO SOCIO|SOCIO UNICO)\b/i.test(L.slice(iSoci, iSoci + 40).join(" "));
         if (/\b(UNIPERSONALE|CON SOCIO UNICO)\s*$/i.test(campi.ragione_sociale)) unico = true;
       }
+      // conferma: la qualifica "Socio Unico" tra i titolari di altre cariche o qualifiche in carica
+      if (!unico && nSoci === null && socioUnicoInCarica(righe)) unico = true;
     }
     campi._unico = unico;
 
@@ -632,7 +693,7 @@
 
   var api = {
     analizza: analizza, componi: componi, MODELLI: MODELLI, capitalizza: capitalizza,
-    costruisciRighe: costruisciRighe, separaIndirizzo: separaIndirizzo
+    costruisciRighe: costruisciRighe, separaIndirizzo: separaIndirizzo, numeroSoci: numeroSoci, socioUnicoInCarica: socioUnicoInCarica
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Visure = api;
